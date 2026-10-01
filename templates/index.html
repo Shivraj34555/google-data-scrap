@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Maps Scraper Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="background-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <main class="container">
+        <header>
+            <h1>Google Maps Scraper</h1>
+            <p>Automate local business data extraction with intelligent targeted search.</p>
+        </header>
+
+        <section class="glass-panel">
+            <form id="scrapeForm">
+                <div class="form-group">
+                    <label for="city">City Locations</label>
+                    <textarea id="city" name="city" placeholder="e.g. Pune, New York (comma or newline separated)"
+                        required rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="keyword">Search Domains/Keywords</label>
+                    <textarea id="keyword" name="keyword" placeholder="e.g. Cafe, Clinic (comma or newline separated)"
+                        required rows="3"></textarea>
+                </div>
+                <button type="submit" id="submitBtn" class="primary-btn">
+                    <span>Start Extractor</span>
+                </button>
+            </form>
+
+            <div id="statusContainer" class="status-container hidden">
+                <div class="loader-spinner"></div>
+                <h2>Extraction in Progress</h2>
+                <p id="statusMessage">Initializing Playwright scraper...</p>
+                <div id="cliOutput" class="cli-terminal"></div>
+            </div>
+
+            <div id="resultContainer" class="result-container hidden">
+                <div class="success-icon">✓</div>
+                <h2>Extraction Complete!</h2>
+                <p id="finalMessage">Extracted multiple records successfully.</p>
+                <a href="#" id="downloadBtn" class="download-btn" download>Download Excel Report</a>
+                <button id="resetBtn" class="secondary-btn">New Search</button>
+            </div>
+
+            <div id="errorContainer" class="error-container hidden">
+                <div class="error-icon">✕</div>
+                <h2>Extraction Failed</h2>
+                <p id="errorMessage">An unexpected error occurred.</p>
+                <button id="retryBtn" class="secondary-btn">Try Again</button>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const form = document.getElementById('scrapeForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const statusContainer = document.getElementById('statusContainer');
+        const resultContainer = document.getElementById('resultContainer');
+        const errorContainer = document.getElementById('errorContainer');
+        const statusMessage = document.getElementById('statusMessage');
+        const finalMessage = document.getElementById('finalMessage');
+        const errorMessage = document.getElementById('errorMessage');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const retryBtn = document.getElementById('retryBtn');
+
+        let intervalId = null;
+        let lastLogIndex = 0;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            // Fix: Clear previous interval if user submitted aggressively
+            if (intervalId) clearInterval(intervalId);
+
+            const city = document.getElementById('city').value;
+            const keyword = document.getElementById('keyword').value;
+
+            form.classList.add('hidden');
+            errorContainer.classList.add('hidden');
+            statusContainer.classList.remove('hidden');
+            document.getElementById('cliOutput').innerHTML = '';
+            lastLogIndex = 0;
+
+            try {
+                const response = await fetch('/scrape', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ city, keyword })
+                });
+                const data = await response.json();
+
+                if (data.task_id) {
+                    pollStatus(data.task_id);
+                } else {
+                    showError("Failed to start task.");
+                }
+            } catch (err) {
+                showError("Error connecting to server.");
+            }
+        });
+
+        const pollStatus = (taskId) => {
+            intervalId = setInterval(async () => {
+                try {
+                    const response = await fetch(`/status/${taskId}`);
+                    const data = await response.json();
+
+                    if (data.logs && data.logs.length > lastLogIndex) {
+                        const cliOutput = document.getElementById('cliOutput');
+                        const newLogs = data.logs.slice(lastLogIndex);
+                        newLogs.forEach(log => {
+                            const line = document.createElement('div');
+                            line.className = 'cli-line';
+                            line.innerText = `> ${log}`;
+                            cliOutput.appendChild(line);
+                        });
+                        lastLogIndex = data.logs.length;
+                        cliOutput.scrollTop = cliOutput.scrollHeight;
+                    }
+
+                    if (data.status === 'running') {
+                        statusMessage.innerText = "Scraping items from Google Maps. This usually takes 2-5 minutes...";
+                    } else if (data.status === 'done') {
+                        clearInterval(intervalId);
+                        showResult(taskId, data.message);
+                    } else if (data.status === 'error') {
+                        clearInterval(intervalId);
+                        showError(data.error);
+                    }
+                } catch (err) {
+                    console.error('Polling error', err);
+                }
+            }, 3000);
+        };
+
+        const showResult = (taskId, msg) => {
+            statusContainer.classList.add('hidden');
+            resultContainer.classList.remove('hidden');
+            finalMessage.innerText = msg;
+            downloadBtn.href = `/download/${taskId}`;
+        };
+
+        const showError = (msg) => {
+            statusContainer.classList.add('hidden');
+            resultContainer.classList.add('hidden');
+            errorContainer.classList.remove('hidden');
+            if (msg) errorMessage.innerText = msg;
+        };
+
+        const resetUI = () => {
+            resultContainer.classList.add('hidden');
+            errorContainer.classList.add('hidden');
+            form.classList.remove('hidden');
+            document.getElementById('keyword').value = '';
+            // Fix: properly detach polling mechanism
+            if (intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+        };
+
+        resetBtn.addEventListener('click', resetUI);
+        retryBtn.addEventListener('click', resetUI);
+
+    </script>
+</body>
+
+</html>
